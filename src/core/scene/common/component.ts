@@ -238,6 +238,20 @@ export interface IComponentService extends IServiceEvents {
      *
      * Sprite Alpha 轮廓生成、资源读取、校验或提交失败时抛出 Error，不会修改组件现有 points。
      * 没有 Sprite、SpriteFrame 或无法解析源图片时，使用 UITransform 矩形回退。
+     *
+     * @param options - 重新生成选项
+     * @param options.path - PolygonCollider2D 组件路径、UUID 或 db:// URL
+     * @param options.record - 是否记录 Undo，默认 true
+     * @returns 生成结果，包含是否变更、最终顶点数和顶点来源
+     * @throws 组件不存在或类型不正确，以及资源读取、轮廓生成、顶点校验或属性提交失败时抛出 Error
+     *
+     * @example
+     * ```ts
+     * const result = await regeneratePolygon2DPoints({
+     *     path: 'Canvas/MyNode/cc.PolygonCollider2D',
+     *     record: true,
+     * });
+     * ```
      */
     regeneratePolygon2DPoints(
         options: IRegeneratePolygon2DPointsOptions,

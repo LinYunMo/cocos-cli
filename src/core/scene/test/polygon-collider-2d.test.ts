@@ -343,7 +343,9 @@ describe('PolygonCollider2D regeneration helpers', () => {
         const { requirePolygonCollider2D } = polygonModule();
         const wrong = new MockComponent();
 
-        expect(() => requirePolygonCollider2D(null)).toThrow('was not found');
-        expect(() => requirePolygonCollider2D(wrong as any)).toThrow('Expected cc.PolygonCollider2D');
+        expect(() => requirePolygonCollider2D(null, '/PolygonNode/cc.PolygonCollider2D'))
+            .toThrow('PolygonCollider2D component not found');
+        expect(() => requirePolygonCollider2D(wrong as any, '/PolygonNode/cc.Label'))
+            .toThrow('Parameter error: component is not cc.PolygonCollider2D');
     });
 });

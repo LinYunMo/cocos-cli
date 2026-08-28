@@ -16,14 +16,16 @@ const DEFAULT_RECT_SIZE = 100;
 /**
  * 将通用组件收窄为 PolygonCollider2D。
  */
-export function requirePolygonCollider2D(component: Component | null): PolygonCollider2D {
+export function requirePolygonCollider2D(component: Component | null, path: string): PolygonCollider2D {
     if (!component || !component.isValid) {
-        throw new Error('PolygonCollider2D component was not found or is no longer valid.');
+        throw new Error(`PolygonCollider2D component not found: ${path}`);
     }
 
     if (!(component instanceof PolygonCollider2D)) {
         const actualType = js.getClassName(component.constructor) || component.constructor?.name || 'unknown';
-        throw new Error(`Expected cc.PolygonCollider2D, but received ${actualType}.`);
+        throw new Error(
+            `Parameter error: component is not cc.PolygonCollider2D: ${path} (received ${actualType})`,
+        );
     }
 
     return component;

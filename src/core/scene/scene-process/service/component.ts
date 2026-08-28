@@ -419,7 +419,7 @@ export class ComponentService extends BaseService<IComponentEvents> implements I
             await Service.Editor.lock();
 
             const component = await this.findComponent(path);
-            const collider = requirePolygonCollider2D(component);
+            const collider = requirePolygonCollider2D(component, path);
             const generated = await generatePolygonPoints(collider);
             validatePolygonPoints(generated.points);
 
