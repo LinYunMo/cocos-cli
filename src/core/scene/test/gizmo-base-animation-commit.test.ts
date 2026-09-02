@@ -150,6 +150,62 @@ describe('GizmoBase animation property commit event', () => {
         }]);
     });
 
+    it('records and commits a normalized Joint2D anchor component scope', async () => {
+        const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
+        class TestGizmo extends GizmoBase {
+            get nodes() {
+                return [{ uuid: 'JointNode' }];
+            }
+        }
+        const gizmo = new (TestGizmo as any)(null);
+        const propPath = '_components.0.anchor';
+
+        gizmo.onControlUpdate(propPath);
+        gizmo.onControlUpdate(propPath);
+        const { Service } = require('../scene-process/service/core/decorator');
+        expect(Service.Undo.beginRecording).toHaveBeenCalledTimes(1);
+        expect(Service.Undo.beginRecording).toHaveBeenCalledWith(['JointNode'], {
+            label: 'Gizmo _components.0.anchor',
+            scope: {
+                editorType: 'scene',
+                nodePath: 'Canvas/JointNode',
+                propPath: '__comps__.0.anchor',
+            },
+        });
+
+        await gizmo.onControlEnd(propPath);
+
+        expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
+        expect(broadcasts).toContainEqual(['animation:property-committed', {
+            nodePath: 'Canvas/JointNode',
+            propPath: '__comps__.0.anchor',
+            source: 'engine',
+        }]);
+    });
+
+    it('does not end the same recording twice when destroy races an async control end', async () => {
+        endRecordingPromise = new Promise((resolve) => {
+            endRecordingResolve = () => resolve(undefined);
+        });
+        const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
+        class TestGizmo extends GizmoBase {
+            get nodes() {
+                return [{ uuid: 'JointNode' }];
+            }
+        }
+        const gizmo = new (TestGizmo as any)(null);
+        gizmo.onControlBegin('_components.0.connectedAnchor');
+
+        const controlEnd = gizmo.onControlEnd('_components.0.connectedAnchor');
+        gizmo.destroy();
+        const { Service } = require('../scene-process/service/core/decorator');
+        expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
+
+        endRecordingResolve?.();
+        await controlEnd;
+        expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
+    });
+
     it('emits a component-changed node event when a component gizmo updates data', () => {
         const { globalEventEmitter } = require('../scene-process/service/core/global-events');
         const { NodeEventType } = require('../common');

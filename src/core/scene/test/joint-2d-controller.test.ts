@@ -18,6 +18,8 @@ const mockSetNodeOpacity = jest.fn();
 const mockUpdateBoundingBox = jest.fn();
 const mockUpdatePositions = jest.fn();
 const mockUpdateVBAttr = jest.fn();
+let mockPanPlaneHit = { x: 0, y: 0, z: 0 };
+let mockPanPlaneHitSuccess = true;
 
 jest.mock('cc', () => {
     class MockColor {
@@ -60,6 +62,8 @@ jest.mock('cc', () => {
     class MockNode {
         name = '';
         parent: unknown = null;
+        active = true;
+        layer = 0;
         renderer = {};
         destroy = jest.fn();
         setPosition = jest.fn();
@@ -70,6 +74,7 @@ jest.mock('cc', () => {
 
     return {
         Color: MockColor,
+        Layers: { Enum: { EDITOR: 1 } },
         MeshRenderer: MockMeshRenderer,
         Node: MockNode,
         Vec3: MockVec3,
@@ -92,11 +97,15 @@ jest.mock('../scene-process/service/gizmo/controller/editable', () => {
             protected _editHandleScales: Record<string, number> = {};
             protected _handleDataMap: Record<string, any> = {};
             protected _editHandlesShape: any = null;
+            protected _isMouseDown = false;
             private _edit = false;
             private readonly _scale = new Vec3(1, 1, 1);
 
             public adjustControllerSize = jest.fn();
             public unregisterEvents = jest.fn();
+            public onControllerMouseDown?: (event: unknown) => void;
+            public onControllerMouseMove?: (event: unknown) => void;
+            public onControllerMouseUp?: (event: unknown) => void;
 
             constructor(rootNode: unknown) {
                 this._rootNode = rootNode;
@@ -116,6 +125,7 @@ jest.mock('../scene-process/service/gizmo/controller/editable', () => {
                 for (const key of this._editHandleKeys) {
                     (this as any).createEditHandle(key, this._editHandleColor);
                 }
+                (this as any).onInitEditHandles?.();
             }
 
             public createShapeNode(name: string): void {
@@ -143,6 +153,20 @@ jest.mock('../scene-process/service/gizmo/controller/editable', () => {
                     (this as any)._updateEditHandle(key);
                 }
             }
+
+            public getPositionOnPanPlane(out: any): boolean {
+                if (mockPanPlaneHitSuccess) {
+                    out.set(mockPanPlaneHit);
+                }
+                return mockPanPlaneHitSuccess;
+            }
+
+            public onHide(): void {
+                this.unregisterEvents();
+                if (this._editHandlesShape) {
+                    this._editHandlesShape.active = false;
+                }
+            }
         },
     };
 });
@@ -153,6 +177,11 @@ jest.mock('../scene-process/service/gizmo/utils/controller-utils', () => {
         __esModule: true,
         default: {
             createShapeByData: jest.fn(() => {
+                const node = new Node();
+                mockCreatedShapeNodes.push(node);
+                return node;
+            }),
+            quad: jest.fn(() => {
                 const node = new Node();
                 mockCreatedShapeNodes.push(node);
                 return node;
@@ -193,6 +222,8 @@ describe('Joint2DController static rendering', () => {
         mockUpdateBoundingBox.mockClear();
         mockUpdatePositions.mockClear();
         mockUpdateVBAttr.mockClear();
+        mockPanPlaneHit = { x: 0, y: 0, z: 0 };
+        mockPanPlaneHitSuccess = true;
     });
 
     it('creates a dashed center line and a compound circular anchor handle', () => {
@@ -230,11 +261,76 @@ describe('Joint2DController static rendering', () => {
         controller.edit = true;
         const shape = controller.shape;
         const editShape = (controller as any)._editHandlesShape;
+        const panPlane = (controller as any)._panPlane;
 
         controller.destroy();
 
         expect(controller.unregisterEvents).toHaveBeenCalledTimes(1);
         expect(shape.destroy).toHaveBeenCalledTimes(1);
         expect(editShape.destroy).toHaveBeenCalledTimes(1);
+        expect(panPlane.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it('projects a handle drag onto the world XY plane and exposes its position', () => {
+        const controller = new Joint2DController({ name: 'gizmoRoot' });
+        controller.editable = true;
+        controller.edit = true;
+        controller.updatePosition(new Vec3(), new Vec3(3, 4, 7));
+        const onDown = jest.fn();
+        const onMove = jest.fn();
+        const onUp = jest.fn();
+        controller.onControllerMouseDown = onDown;
+        controller.onControllerMouseMove = onMove;
+        controller.onControllerMouseUp = onUp;
+
+        mockPanPlaneHit = { x: 12, y: 34, z: 7 };
+        (controller as any)._isMouseDown = true;
+        const event = { x: 10, y: 20, propagationStopped: false };
+        (controller as any).onMouseDown(event);
+        (controller as any).onMouseMove(event);
+
+        const dragPosition = new Vec3();
+        controller.getDragWorldPosition(dragPosition);
+        expect(dragPosition).toEqual(new Vec3(12, 34, 7));
+        expect((controller as any)._panPlane.setPosition).toHaveBeenCalledWith(0, 0, 7);
+        expect((controller as any)._panPlane.active).toBe(true);
+        expect(onDown).toHaveBeenCalledTimes(1);
+        expect(onMove).toHaveBeenCalledTimes(1);
+
+        (controller as any).onMouseUp(event);
+        expect((controller as any)._panPlane.active).toBe(false);
+        expect(onUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not begin a drag when the pan plane cannot be hit', () => {
+        const controller = new Joint2DController({ name: 'gizmoRoot' });
+        controller.editable = true;
+        controller.edit = true;
+        const onDown = jest.fn();
+        controller.onControllerMouseDown = onDown;
+        mockPanPlaneHitSuccess = false;
+
+        (controller as any).onMouseDown({ x: 10, y: 20, propagationStopped: false });
+
+        expect(onDown).not.toHaveBeenCalled();
+        expect((controller as any)._panPlane.active).toBe(false);
+    });
+
+    it('deactivates both the pan plane and edit handle root when the controller is hidden', () => {
+        const controller = new Joint2DController({ name: 'gizmoRoot' });
+        controller.editable = true;
+        controller.edit = true;
+        const editShape = (controller as any)._editHandlesShape;
+        (controller as any)._isMouseDown = true;
+        (controller as any).onMouseDown({ x: 10, y: 20, propagationStopped: false });
+        expect((controller as any)._panPlane.active).toBe(true);
+        expect(editShape.active).toBe(true);
+
+        controller.onHide();
+
+        expect((controller as any)._panPlane.active).toBe(false);
+        expect((controller as any)._dragging).toBe(false);
+        expect(editShape.active).toBe(false);
+        expect(controller.unregisterEvents).toHaveBeenCalledTimes(1);
     });
 });

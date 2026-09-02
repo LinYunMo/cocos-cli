@@ -1,9 +1,10 @@
 'use strict';
 
-import { Color, MeshRenderer, Node, Vec3 } from 'cc';
+import { Color, Layers, MeshRenderer, Node, Vec3 } from 'cc';
 import EditableController from '../../controller/editable';
 import ControllerUtils from '../../utils/controller-utils';
 import ControllerShape from '../../utils/controller-shape';
+import type { GizmoMouseEvent } from '../../utils/defines';
 import {
     getModel,
     setMeshColor,
@@ -14,18 +15,23 @@ import {
 } from '../../utils/engine-utils';
 
 const tempVec3 = new Vec3();
+const panPlaneLayer = Layers.Enum.EDITOR;
+const panPlaneSize = 100000;
 
 /**
  * Joint2D 的通用可视化控制器。
  *
- * 当前阶段只负责绘制锚点 Handle 与刚体中心到锚点的虚线；
- * 拖动平面和鼠标交互将在后续交互阶段接入。
+ * 绘制锚点 Handle 与刚体中心到锚点的虚线，并把 Handle 的鼠标位置
+ * 投影到世界 XY 平面，供 Joint2DGizmo 完成坐标换算和属性写回。
  */
 export class Joint2DController extends EditableController {
     private _lineNode: Node | null = null;
     private _lineRenderer: MeshRenderer | null = null;
+    private _panPlane: Node | null = null;
     private readonly _anchor = new Vec3();
     private readonly _center = new Vec3();
+    private readonly _dragWorldPosition = new Vec3();
+    private _dragging = false;
 
     constructor(rootNode: Node) {
         super(rootNode);
@@ -39,6 +45,27 @@ export class Joint2DController extends EditableController {
         this.setEditHandlesColor(color);
         if (this._lineNode) {
             setMeshColor(this._lineNode, color);
+        }
+    }
+
+    public override onInitEditHandles(): void {
+        const panPlane = ControllerUtils.quad(Vec3.ZERO, panPlaneSize, panPlaneSize);
+        panPlane.name = 'Joint2DPanPlane';
+        panPlane.parent = this._rootNode;
+        panPlane.active = false;
+        panPlane.layer = panPlaneLayer;
+        setNodeOpacity(panPlane, 0);
+        this._panPlane = panPlane;
+    }
+
+    public getDragWorldPosition(out: Vec3): Vec3 {
+        return out.set(this._dragWorldPosition);
+    }
+
+    public cancelDrag(): void {
+        this._dragging = false;
+        if (this._panPlane) {
+            this._panPlane.active = false;
         }
     }
 
@@ -110,11 +137,77 @@ export class Joint2DController extends EditableController {
         this.adjustControllerSize();
     }
 
+    protected override onMouseDown(event: GizmoMouseEvent): void {
+        event.propagationStopped = true;
+        if (!this.edit || !this._panPlane) {
+            return;
+        }
+
+        this._panPlane.setPosition(0, 0, this._anchor.z);
+        this._panPlane.active = true;
+        this._dragging = this.getPositionOnPanPlane(
+            this._dragWorldPosition,
+            event.x,
+            event.y,
+            this._panPlane,
+        );
+        if (this._dragging) {
+            this.onControllerMouseDown?.(event);
+        } else {
+            this._panPlane.active = false;
+        }
+    }
+
+    protected override onMouseMove(event: GizmoMouseEvent): void {
+        event.propagationStopped = true;
+        if (!this.edit || !this._panPlane || !this._dragging || !this._isMouseDown) {
+            return;
+        }
+
+        if (this.getPositionOnPanPlane(this._dragWorldPosition, event.x, event.y, this._panPlane)) {
+            this.onControllerMouseMove?.(event);
+        }
+    }
+
+    protected override onMouseUp(event: GizmoMouseEvent): void {
+        event.propagationStopped = true;
+        if (!this._dragging) {
+            return;
+        }
+
+        this.endDrag(event);
+    }
+
+    protected override onMouseLeave(event: GizmoMouseEvent): void {
+        if (this._dragging) {
+            this.endDrag(event);
+        }
+    }
+
+    public override onHide(): void {
+        this.cancelDrag();
+        // Handle 使用 EditableController 独立的 _editHandlesShape，和中心虚线的
+        // shape 不是同一个节点。必须继续执行父类隐藏逻辑，否则切换选择时线会
+        // 消失，但圆形 Handle 仍留在屏幕上并保持可命中。
+        super.onHide();
+    }
+
+    private endDrag(event: GizmoMouseEvent): void {
+        this._dragging = false;
+        if (this._panPlane) {
+            this._panPlane.active = false;
+        }
+        this.onControllerMouseUp?.(event);
+    }
+
     public destroy(): void {
+        this.cancelDrag();
         this.unregisterEvents();
         this._editHandlesShape?.destroy();
         this._editHandlesShape = null;
         this.shape?.destroy();
+        this._panPlane?.destroy();
+        this._panPlane = null;
         this._lineNode = null;
         this._lineRenderer = null;
     }

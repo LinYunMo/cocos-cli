@@ -146,8 +146,12 @@ class GizmoBase<T extends Component = Component> {
 
     async commitChanges() {
         this._recorded = false;
-        if (this.undoID !== '') {
-            const undoID = this.undoID;
+        const undoID = this.undoID;
+        // 在等待异步 endRecording 前先释放当前 ID。销毁、隐藏或快速切换目标
+        // 可能再次触发 commitChanges；提前清空可避免重复结束旧事务，也不会让
+        // 旧事务完成后覆盖期间新建的 recording ID。
+        this.undoID = '';
+        if (undoID !== '') {
             try {
                 const svc = getService();
                 await svc?.Undo?.endRecording?.(undoID);
@@ -155,7 +159,6 @@ class GizmoBase<T extends Component = Component> {
                 console.warn('[Gizmo] Failed to end undo recording:', e);
             }
         }
-        this.undoID = '';
     }
 
     private createRecordingScope(propPath?: string | null): IUndoScope | undefined {
