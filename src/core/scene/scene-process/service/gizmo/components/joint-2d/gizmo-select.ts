@@ -205,8 +205,8 @@ export class Joint2DGizmo<T extends Joint2D = Joint2D> extends GizmoBase<T> {
         if (commitProperty) {
             void this.onControlEnd(state.propPath);
         } else {
-            // target 已经被替换时不能再按当前 this.nodes 广播旧属性的动画提交；
-            // 只结束此前以旧节点 UUID 开始的录制，生命周期完整硬化留待步骤 7。
+            // target 被替换后 this.nodes 已指向新目标，不能用它广播旧属性的动画提交；
+            // 此处仅结束旧节点 UUID 对应的 Undo 录制，避免将提交错误关联到新目标。
             this._isControlBegin = false;
             void this.commitChanges();
         }
