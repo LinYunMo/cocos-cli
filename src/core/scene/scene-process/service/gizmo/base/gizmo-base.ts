@@ -118,6 +118,9 @@ class GizmoBase<T extends Component = Component> {
 
     async onControlEnd(propPath: string | null) {
         this._isControlBegin = false;
+        // Gizmo 可能在异步 Undo 提交完成前因为选择切换、组件删除或场景关闭
+        // 被解绑。提前保存稳定的节点路径，避免提交后再读取空的 this.nodes。
+        const animationCommitNodePaths = this.collectAnimationPropertyCommitNodePaths(propPath);
         await this.commitChanges();
         try {
             const svcEvents = getServiceEvents();
@@ -125,7 +128,7 @@ class GizmoBase<T extends Component = Component> {
         } catch (e) {
             console.warn('[Gizmo] Failed to broadcast legacy control-end event:', e);
         }
-        this.broadcastAnimationPropertyCommitted(propPath);
+        this.broadcastAnimationPropertyCommitted(propPath, animationCommitNodePaths);
     }
 
     recordChanges(propPath?: string | null) {
@@ -242,16 +245,30 @@ class GizmoBase<T extends Component = Component> {
         return null;
     }
 
-    private broadcastAnimationPropertyCommitted(propPath: string | null): void {
+    private collectAnimationPropertyCommitNodePaths(propPath: string | null): string[] {
+        if (!propPath) {
+            return [];
+        }
+        const EditorExtends = (cc as any).EditorExtends || (globalThis as any).EditorExtends;
+        const nodePaths: string[] = [];
+        for (const node of this.nodes) {
+            try {
+                const nodePath = EditorExtends?.Node?.getNodePath?.(node);
+                if (nodePath) {
+                    nodePaths.push(nodePath);
+                }
+            } catch (e) {
+                console.warn('[Gizmo] Failed to capture animation property commit target:', e);
+            }
+        }
+        return nodePaths;
+    }
+
+    private broadcastAnimationPropertyCommitted(propPath: string | null, nodePaths: readonly string[]): void {
         if (!propPath) {
             return;
         }
-        const EditorExtends = (cc as any).EditorExtends || (globalThis as any).EditorExtends;
-        for (const node of this.nodes) {
-            const nodePath = EditorExtends?.Node?.getNodePath?.(node);
-            if (!nodePath) {
-                continue;
-            }
+        for (const nodePath of nodePaths) {
             broadcastAnimationPropertyCommitted({
                 nodePath,
                 propPath,
