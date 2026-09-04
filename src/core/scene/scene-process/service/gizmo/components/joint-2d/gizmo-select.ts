@@ -21,7 +21,7 @@ interface JointDragState<T extends Joint2D> {
 
 function toPrecision(value: number, precision: number): number {
     const factor = Math.pow(10, precision);
-    return Math.round(value * factor) / factor;
+    return Math.round(Math.abs(value) * factor) * Math.sign(value) / factor;
 }
 
 /**

@@ -591,6 +591,26 @@ describe('Joint2D Gizmo', () => {
         );
     });
 
+    it('quantizes positive and negative anchor coordinates symmetrically', () => {
+        const ownerNode = createNode(0, 0);
+        const target = Object.assign(new HingeJoint2D(), {
+            node: ownerNode,
+            anchor: new Vec2(),
+            connectedAnchor: new Vec2(),
+            connectedBody: null,
+        });
+        const gizmo = new hingeModule.SelectGizmo(target);
+        gizmo.show();
+        const anchorController = mockControllerInstances[0];
+
+        anchorController.onControllerMouseDown();
+        anchorController.setDragWorldPosition(new Vec3(-0.05, 0.05, 0));
+        anchorController.onControllerMouseMove();
+        anchorController.onControllerMouseUp();
+
+        expect(target.anchor).toEqual(new Vec2(-0.1, 0.1));
+    });
+
     it('writes connectedAnchor in connected-body local space, or world space without a body', () => {
         const ownerNode = createNode(10, 20);
         const connectedNode = createNode(-5, 7, 4, 2);

@@ -39,6 +39,11 @@ class GizmoBase<T extends Component = Component> {
     private _hidden = true;
     private _target: T | null;
     protected _isInitialized = false;
+    /**
+     * Synchronous control lifecycle state shared with derived gizmos during teardown.
+     * Keep resets of these flags before any asynchronous Undo finalization so hide,
+     * destroy, target replacement, and mouse-up cannot finish the same drag twice.
+     */
     protected _isControlBegin = false;
     protected _recorded = false;
     protected _nodeSelected = false;
@@ -148,6 +153,8 @@ class GizmoBase<T extends Component = Component> {
     }
 
     async commitChanges() {
+        // This reset is intentionally synchronous. Derived gizmos may inspect
+        // `_recorded` while another teardown path is awaiting endRecording().
         this._recorded = false;
         const undoID = this.undoID;
         // 在等待异步 endRecording 前先释放当前 ID。销毁、隐藏或快速切换目标
@@ -235,11 +242,15 @@ class GizmoBase<T extends Component = Component> {
         }
     }
 
-    getCompPropPath(propName: string) {
+    getCompPropPath(propName: string): string | null {
         const target = this.target;
         if (target) {
             const node = target.node;
-            const compIdx = (node as any)['_components'].indexOf(target);
+            const components = (node as any)['_components'] as Component[] | undefined;
+            const compIdx = components?.indexOf(target) ?? -1;
+            if (compIdx < 0) {
+                return null;
+            }
             return '_components.' + compIdx + '.' + propName;
         }
         return null;

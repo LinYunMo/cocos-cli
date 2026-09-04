@@ -243,6 +243,19 @@ describe('GizmoBase animation property commit event', () => {
         expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
     });
 
+    it('returns null when the target is absent from the node component list', () => {
+        const { Component } = require('cc');
+        const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
+        const target = new Component();
+        target.node._components = [];
+        const gizmo = new GizmoBase(target);
+
+        expect(gizmo.getCompPropPath('anchor')).toBeNull();
+
+        target.node._components.push(target);
+        expect(gizmo.getCompPropPath('anchor')).toBe('_components.0.anchor');
+    });
+
     it('emits a component-changed node event when a component gizmo updates data', () => {
         const { globalEventEmitter } = require('../scene-process/service/core/global-events');
         const { NodeEventType } = require('../common');
