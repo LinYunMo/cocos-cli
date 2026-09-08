@@ -7424,7 +7424,6 @@ export declare interface IUndoScope {
     assetUrl?: string;
     nodePath?: string;
     propPath?: string;
-    propPaths?: string[];
     editorType?: 'scene' | 'prefab' | 'animation' | string;
     mode?: 'general' | 'prefab' | 'animation' | 'preview' | string;
 }

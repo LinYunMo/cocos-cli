@@ -1,7 +1,7 @@
 export {};
 
-const mockControlUpdates: unknown[] = [];
-const mockControlEnds: unknown[] = [];
+const mockControlUpdates: (string | null)[] = [];
+const mockControlEnds: (string | null)[] = [];
 const mockChangedNodes: unknown[] = [];
 const mockRegisterGizmo = jest.fn();
 const mockOperation = { changePointer: jest.fn() };
@@ -203,14 +203,14 @@ jest.mock('../scene-process/service/gizmo/base/gizmo-base', () => ({
             return `_components.0.${propName}`;
         }
 
-        public onControlUpdate(propPaths: unknown): void {
+        public onControlUpdate(propPath: string | null): void {
             this._isControlBegin = true;
-            mockControlUpdates.push(Array.isArray(propPaths) ? [...propPaths] : propPaths);
+            mockControlUpdates.push(propPath);
         }
 
-        public async onControlEnd(propPaths: unknown): Promise<void> {
+        public async onControlEnd(propPath: string | null): Promise<void> {
             this._isControlBegin = false;
-            mockControlEnds.push(Array.isArray(propPaths) ? [...propPaths] : propPaths);
+            mockControlEnds.push(propPath);
         }
 
         protected onComponentChanged(node: unknown): void {
@@ -432,7 +432,7 @@ describe('Collider2D Gizmo correctness', () => {
         expect(mockControlUpdates).toEqual([]);
     });
 
-    it('uses the exact Box property scope for area, centered resize and normal resize', () => {
+    it('uses the Box gesture primary property for area, centered resize and normal resize', () => {
         const run = (handleType: string, altKey: boolean) => {
             const target = {
                 node: createNode(),
@@ -465,7 +465,7 @@ describe('Collider2D Gizmo correctness', () => {
         expect(centeredTarget.size).toMatchObject({ width: 14, height: 20 });
 
         const normalTarget = run('x', false);
-        expect(mockControlUpdates.pop()).toEqual(['_components.0.size', '_components.0.offset']);
+        expect(mockControlUpdates.pop()).toBe('_components.0.size');
         expect(mockControlEnds.pop()).toBe('_components.0.size');
         expect(normalTarget.offset).toMatchObject({ x: 1, y: 0 });
         expect(normalTarget.size).toMatchObject({ width: 12, height: 20 });
@@ -594,6 +594,7 @@ describe('Collider2D Gizmo correctness', () => {
         expect(target.size.width).toBe(startsWithAlt ? 22 : 16);
         expect(target.offset.x).toBe(startsWithAlt ? 2 : 3);
         gizmo.onControllerMouseUp();
+        expect(mockControlUpdates).toEqual(Array(3).fill('_components.0.size'));
         expect(mockControlEnds).toEqual(['_components.0.size']);
     });
 

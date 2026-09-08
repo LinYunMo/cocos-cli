@@ -142,7 +142,7 @@ class CircleCollider2DGizmo extends GizmoBase<CircleCollider2D> {
         }
         makeVec3InPrecision(posDelta, 1);
         posDelta.z = 0;
-        this.target.offset = new Vec2(this._offset.x + posDelta.x, this._offset.y + posDelta.y);
+        this.target.offset.set(this._offset.x + posDelta.x, this._offset.y + posDelta.y);
         this.onComponentChanged(node);
     }
 

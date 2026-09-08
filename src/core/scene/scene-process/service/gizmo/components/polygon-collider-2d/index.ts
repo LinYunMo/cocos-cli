@@ -542,7 +542,6 @@ class PolygonCollider2DGizmo extends GizmoBase<PolygonCollider2D> {
                 this._dragPointIndex = handleData.index;
             }
         } else if (handleData.type === HandleType.Area) {
-            this._offset = this.target.offset.clone();
             this._propPath = this.getCompPropPath('offset');
         }
     }

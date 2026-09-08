@@ -291,7 +291,7 @@ describe('SceneUndoManager', () => {
         ]);
     });
 
-    it('matches one multi-property command through either property scope', async () => {
+    it('matches only the primary scope while restoring every property in the snapshot', async () => {
         const snapshots = new Map<string, any>([[
             'box-node',
             { size: { width: 10, height: 20 }, offset: { x: 0, y: 0 } },
@@ -316,7 +316,7 @@ describe('SceneUndoManager', () => {
             scope: {
                 editorType: 'scene',
                 nodePath: 'Canvas/Box',
-                propPaths: [sizePath, offsetPath],
+                propPath: sizePath,
             },
         });
         snapshots.set('box-node', {
@@ -327,22 +327,24 @@ describe('SceneUndoManager', () => {
         expect(await manager.endRecording(recordingId)).toBe(true);
         expect(manager.getHistoryForTesting()).toHaveLength(1);
         expect(manager.hasScopedDifference(checkpoint, { propPath: sizePath })).toBe(true);
-        expect(manager.hasScopedDifference(checkpoint, { propPath: offsetPath })).toBe(true);
+        expect(manager.hasScopedDifference(checkpoint, { propPath: offsetPath })).toBe(false);
         expect(manager.canUndo({ scope: { propPath: sizePath } })).toBe(true);
-        expect(manager.canUndo({ scope: { propPath: offsetPath } })).toBe(true);
+        expect(manager.canUndo({ scope: { propPath: offsetPath } })).toBe(false);
 
-        await expect(manager.undo({ scope: { propPath: offsetPath } })).resolves.toMatchObject({ success: true });
+        await expect(manager.undo({ scope: { propPath: offsetPath } })).resolves.toMatchObject({ success: false });
+        await expect(manager.undo({ scope: { propPath: sizePath } })).resolves.toMatchObject({ success: true });
         expect(snapshots.get('box-node')).toEqual({
             size: { width: 10, height: 20 },
             offset: { x: 0, y: 0 },
         });
+        expect(manager.canRedo({ scope: { propPath: offsetPath } })).toBe(false);
         await expect(manager.redo({ scope: { propPath: sizePath } })).resolves.toMatchObject({ success: true });
         expect(snapshots.get('box-node')).toEqual({
             size: { width: 14, height: 20 },
             offset: { x: 2, y: 0 },
         });
 
-        await expect(manager.discardScopedChangesAfterCheckpoint(checkpoint, { propPath: offsetPath }))
+        await expect(manager.discardScopedChangesAfterCheckpoint(checkpoint, { propPath: sizePath }))
             .resolves.toMatchObject({ success: true });
         expect(snapshots.get('box-node')).toEqual({
             size: { width: 10, height: 20 },

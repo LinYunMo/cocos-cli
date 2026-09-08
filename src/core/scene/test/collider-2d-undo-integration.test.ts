@@ -352,28 +352,68 @@ describe.each<Kind>(['box', 'circle', 'polygon'])('%s Collider2D integrated undo
     });
 });
 
-it('keeps Box Alt-to-normal resize in one snapshot with both scopes and a single size animation commit', async () => {
+it.each([false, true])('keeps dynamic Box Alt in one size-scoped snapshot (starts with Alt=%s)', async (startsWithAlt) => {
     const f = fixture('box');
     const before = snapshot(f.target);
     const checkpoint = undo.createCheckpoint();
-    f.gizmo.onKeyDown({ altKey: true });
+    f.gizmo.onKeyDown({ altKey: startsWithAlt });
     f.begin(); f.move(4);
-    f.gizmo.onKeyUp({ altKey: false });
-    f.move(8); f.end();
+    f.gizmo.onKeyDown({ altKey: !startsWithAlt });
+    f.move(8);
+    f.gizmo.onKeyUp({ altKey: startsWithAlt });
+    f.move(12); f.end();
     await settle();
     const after = snapshot(f.target);
     expect(mockServices.Undo.beginRecording).toHaveBeenCalledTimes(1);
     expect(undo.getHistoryForTesting()).toHaveLength(1);
+    expect(after.size).not.toEqual(before.size);
+    expect(after.offset).not.toEqual(before.offset);
+    expect(undo.getHistoryForTesting()[0].meta.scope).toEqual({
+        editorType: 'scene', nodePath: 'Canvas/A', propPath: '__comps__.1.size',
+    });
     expect(undo.hasScopedDifference(checkpoint, { propPath: '__comps__.1.size' })).toBe(true);
-    expect(undo.hasScopedDifference(checkpoint, { propPath: '__comps__.1.offset' })).toBe(true);
+    expect(undo.hasScopedDifference(checkpoint, { propPath: '__comps__.1.offset' })).toBe(false);
     expect(committed.map(event => event.propPath)).toEqual(['__comps__.1.size']);
-    await undo.undo({ scope: { propPath: '__comps__.1.offset' } });
+    expect(await undo.undo({ scope: { propPath: '__comps__.1.offset' } })).toMatchObject({ success: false });
+    expect(snapshot(f.target)).toEqual(after);
+    await undo.undo({ scope: { propPath: '__comps__.1.size' } });
     expect(snapshot(f.target)).toEqual(before);
     await undo.redo({ scope: { propPath: '__comps__.1.size' } });
     expect(snapshot(f.target)).toEqual(after);
-    await undo.discardScopedChangesAfterCheckpoint(checkpoint, { propPath: '__comps__.1.offset' });
+    await undo.discardScopedChangesAfterCheckpoint(checkpoint, { propPath: '__comps__.1.size' });
     expect(snapshot(f.target)).toEqual(before);
     expect(undo.getHistoryForTesting()).toHaveLength(0);
+});
+
+it('absorbs a size-scoped Box resize into one animation Undo while preserving its full snapshot', async () => {
+    const f = fixture('box');
+    const before = snapshot(f.target);
+    f.begin(); f.move(8); f.end(); await settle();
+    const after = snapshot(f.target);
+    expect(after.size).not.toEqual(before.size);
+    expect(after.offset).not.toEqual(before.offset);
+    const event = committed[0];
+    expect(event.propPath).toBe('__comps__.1.size');
+    const animationScope = { assetUuid: 'clip-1', editorType: 'animation', mode: 'animation' };
+    const animationCommand = {
+        meta: { id: 'key-size', label: 'Key size', type: 'animation:test', scope: animationScope, timestamp: 0 },
+        undo: jest.fn(async () => ({ success: true })),
+        redo: jest.fn(async () => ({ success: true })),
+    };
+    // Match the single-property scope used by Animation's property-commit path.
+    undo.pushWithPrevious(animationCommand, {
+        type: 'animation:property-commit',
+        scope: animationScope,
+        previousScope: { editorType: 'scene', nodePath: event.nodePath, propPath: event.propPath },
+        previousTypes: ['recording:snapshot'],
+    });
+    expect(undo.getHistoryForTesting()).toHaveLength(1);
+    expect(await undo.undo({ scope: animationScope })).toMatchObject({ success: true });
+    expect(animationCommand.undo).toHaveBeenCalledTimes(1);
+    expect(snapshot(f.target)).toEqual(before);
+    expect(await undo.redo({ scope: animationScope })).toMatchObject({ success: true });
+    expect(animationCommand.redo).toHaveBeenCalledTimes(1);
+    expect(snapshot(f.target)).toEqual(after);
 });
 
 it.each(['insert', 'delete'])('restores Polygon points after a mouse-down %s operation', async (operation) => {
@@ -396,6 +436,69 @@ it.each(['insert', 'delete'])('restores Polygon points after a mouse-down %s ope
     expect(snapshot(f.target)).toEqual(changed);
 });
 
+it.each<Kind>(['box', 'circle', 'polygon'])('%s Area reuses its offset without allocating temporary offset vectors', async (kind) => {
+    const f = fixture(kind);
+    f.target.offset.set(0.04, 0.07);
+    const before = snapshot(f.target);
+    const offset = f.target.offset;
+    const clone = jest.spyOn(offset, 'clone');
+    const ccModule = require('cc');
+    const OriginalVec2 = ccModule.Vec2;
+    let construct: jest.SpyInstance | undefined;
+    try {
+        f.begin('area');
+        expect(clone).toHaveBeenCalledTimes(1);
+        construct = jest.spyOn(ccModule, 'Vec2').mockImplementation((...args: unknown[]) => new OriginalVec2(...args));
+        f.move(0.06); f.move(1.06);
+        // Box controller refresh still allocates its existing display-size Vec2.
+        expect(construct).toHaveBeenCalledTimes(kind === 'box' ? 2 : 0);
+        if (kind === 'box') expect(construct.mock.calls).toEqual([[100, 80], [100, 80]]);
+        expect(f.target.offset).toBe(offset);
+        // Box rounds the final offset; Circle/Polygon round the delta first.
+        expect(offset.x).toBeCloseTo(kind === 'box' ? 1.1 : 1.14);
+        expect(offset.y).toBeCloseTo(kind === 'box' ? 0.1 : 0.07);
+        f.end(); await settle();
+        const after = snapshot(f.target);
+        expect(mockServices.Undo.beginRecording).toHaveBeenCalledTimes(1);
+        expect(undo.getHistoryForTesting()).toHaveLength(1);
+        expect(committed.map(event => event.propPath)).toEqual(['__comps__.1.offset']);
+        await undo.undo();
+        expect(snapshot(f.target)).toEqual(before);
+        await undo.redo();
+        expect(snapshot(f.target)).toEqual(after);
+    } finally {
+        construct?.mockRestore();
+        clone.mockRestore();
+    }
+});
+
+it.each([false, true])('Box resize does not clone offset during movement (Alt=%s)', async (altKey) => {
+    const f = fixture('box');
+    const before = snapshot(f.target);
+    const offset = f.target.offset;
+    const clone = jest.spyOn(offset, 'clone');
+    try {
+        f.gizmo.onKeyDown({ altKey });
+        f.begin();
+        expect(clone).toHaveBeenCalledTimes(1);
+        clone.mockClear();
+        f.move(4); f.move(8);
+        expect(clone).not.toHaveBeenCalled();
+        expect(f.target.offset).toBe(offset);
+        expect(offset.x).toBe(altKey ? 0 : 4);
+        f.end(); await settle();
+        const after = snapshot(f.target);
+        expect(mockServices.Undo.beginRecording).toHaveBeenCalledTimes(1);
+        expect(undo.getHistoryForTesting()).toHaveLength(1);
+        await undo.undo();
+        expect(snapshot(f.target)).toEqual(before);
+        await undo.redo();
+        expect(snapshot(f.target)).toEqual(after);
+    } finally {
+        clone.mockRestore();
+    }
+});
+
 it('keeps Circle Area offsets and Undo isolated between nodes', async () => {
     const a = fixture('circle', 'CircleA');
     const b = fixture('circle', 'CircleB');
@@ -416,7 +519,7 @@ it('keeps Circle Area offsets and Undo isolated between nodes', async () => {
     expect(b.target.offset).toEqual(new Vec2());
 });
 
-it('does not add offset scope for an unchanged Box move before Alt resize', async () => {
+it('does not start recording for an unchanged Box move before Alt resize', async () => {
     const f = fixture('box');
     const before = snapshot(f.target);
     const checkpoint = undo.createCheckpoint();
@@ -442,6 +545,25 @@ it('records only size when Box offset rounds back to its current value', async (
     expect(committed.map(event => event.propPath)).toEqual(['__comps__.1.size']);
 });
 
+it('keeps resize scoped to size when rounding changes only offset without an animation commit', async () => {
+    const f = fixture('box');
+    f.target.offset.x = 0.04;
+    const before = snapshot(f.target);
+    f.begin(); f.move(0.02); f.end(); await settle();
+    const after = snapshot(f.target);
+    expect(after.size).toEqual(before.size);
+    expect(after.offset).not.toEqual(before.offset);
+    expect(undo.getHistoryForTesting()).toHaveLength(1);
+    expect(undo.getHistoryForTesting()[0].meta.scope).toEqual({
+        editorType: 'scene', nodePath: 'Canvas/A', propPath: '__comps__.1.size',
+    });
+    expect(committed).toHaveLength(0);
+    await undo.undo();
+    expect(snapshot(f.target)).toEqual(before);
+    await undo.redo();
+    expect(snapshot(f.target)).toEqual(after);
+});
+
 it.each(['size', 'offset'])('keys only resized size when it has a net change (restored %s)', async (restored) => {
     const f = fixture('box');
     const before = snapshot(f.target);
@@ -454,6 +576,9 @@ it.each(['size', 'offset'])('keys only resized size when it has a net change (re
     expect(committed.map(event => event.propPath)).toEqual(restored === 'size' ? [] : ['__comps__.1.size']);
     expect(undo.getHistoryForTesting()).toHaveLength(1);
     expect(mockServices.Undo.beginRecording).toHaveBeenCalledTimes(1);
+    expect(undo.getHistoryForTesting()[0].meta.scope).toEqual({
+        editorType: 'scene', nodePath: 'Canvas/A', propPath: '__comps__.1.size',
+    });
     await undo.undo();
     expect(snapshot(f.target)).toEqual(before);
     await undo.redo();

@@ -3,11 +3,6 @@ export interface IUndoScope {
     assetUrl?: string;
     nodePath?: string;
     propPath?: string;
-    /**
-     * A single user operation may update multiple related properties while still
-     * remaining one undo command (for example BoxCollider2D size + offset).
-     */
-    propPaths?: string[];
     editorType?: 'scene' | 'prefab' | 'animation' | string;
     mode?: 'general' | 'prefab' | 'animation' | 'preview' | string;
 }

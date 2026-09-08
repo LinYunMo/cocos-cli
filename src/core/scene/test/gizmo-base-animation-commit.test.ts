@@ -220,7 +220,7 @@ describe('GizmoBase animation property commit event', () => {
         }]);
     });
 
-    it('records one multi-property scope and commits only the primary animation property', async () => {
+    it('records one Box primary property scope and commits a single animation property', async () => {
         const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
         class TestGizmo extends GizmoBase {
             get nodes() {
@@ -228,18 +228,18 @@ describe('GizmoBase animation property commit event', () => {
             }
         }
         const gizmo = new (TestGizmo as any)(null);
-        const propPaths = ['_components.0.size', '_components.0.offset'];
+        const propPath = '_components.0.size';
 
-        gizmo.onControlUpdate(propPaths);
-        gizmo.onControlUpdate(propPaths);
+        gizmo.onControlUpdate(propPath);
+        gizmo.onControlUpdate(propPath);
         const { Service } = require('../scene-process/service/core/decorator');
         expect(Service.Undo.beginRecording).toHaveBeenCalledTimes(1);
         expect(Service.Undo.beginRecording).toHaveBeenCalledWith(['BoxColliderNode'], {
-            label: 'Gizmo _components.0.size, _components.0.offset',
+            label: 'Gizmo _components.0.size',
             scope: {
                 editorType: 'scene',
                 nodePath: 'Canvas/BoxColliderNode',
-                propPaths: ['__comps__.0.size', '__comps__.0.offset'],
+                propPath: '__comps__.0.size',
             },
         });
 
@@ -279,7 +279,7 @@ describe('GizmoBase animation property commit event', () => {
         expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
     });
 
-    it('adds a property to an active drag without splitting its snapshot undo', async () => {
+    it('restores all snapshot changes under one primary scope and isolates the next gesture', async () => {
         const { SceneUndoManager } = require('../scene-process/service/undo/scene-undo-manager');
         let state = { size: 10, offset: 0 };
         const manager = new SceneUndoManager({
@@ -306,29 +306,30 @@ describe('GizmoBase animation property commit event', () => {
             const gizmo = new (TestGizmo as any)(null);
             gizmo.onControlUpdate('_components.0.size');
             state.size = 14;
-            const paths = ['_components.0.size', '_components.0.offset'];
-            gizmo.onControlUpdate(paths);
+            gizmo.onControlUpdate('_components.0.size');
             state = { size: 16, offset: 3 };
             await gizmo.onControlEnd('_components.0.size');
             expect(Service.Undo.beginRecording).toHaveBeenCalledTimes(1);
             expect(manager.getHistoryForTesting()).toHaveLength(1);
-            expect(manager.hasScopedDifference(checkpoint, { propPath: '__comps__.0.offset' })).toBe(true);
+            expect(manager.hasScopedDifference(checkpoint, { propPath: '__comps__.0.offset' })).toBe(false);
             expect(manager.hasScopedDifference(checkpoint, { propPath: '__comps__.0.size' })).toBe(true);
             expect(broadcasts.filter(([event]) => event === 'animation:property-committed')).toEqual([
                 ['animation:property-committed', {
                     nodePath: 'Canvas/Box', propPath: '__comps__.0.size', source: 'engine',
                 }],
             ]);
-            expect(await manager.undo({ scope: { propPath: '__comps__.0.offset' } })).toMatchObject({ success: true });
+            expect(await manager.undo({ scope: { propPath: '__comps__.0.size' } })).toMatchObject({ success: true });
             expect(state).toEqual({ size: 10, offset: 0 });
             expect(await manager.redo({ scope: { propPath: '__comps__.0.size' } })).toMatchObject({ success: true });
             expect(state).toEqual({ size: 16, offset: 3 });
-            gizmo.onControlUpdate('_components.0.size');
-            state.size = 20;
-            await gizmo.onControlEnd('_components.0.size');
-            expect(manager.getHistoryForTesting()[0].meta.scope.propPaths).toEqual(['__comps__.0.size', '__comps__.0.offset']);
-            expect(manager.getHistoryForTesting()[1].meta.scope).toEqual({
+            gizmo.onControlUpdate('_components.0.offset');
+            state.offset = 6;
+            await gizmo.onControlEnd('_components.0.offset');
+            expect(manager.getHistoryForTesting()[0].meta.scope).toEqual({
                 editorType: 'scene', nodePath: 'Canvas/Box', propPath: '__comps__.0.size',
+            });
+            expect(manager.getHistoryForTesting()[1].meta.scope).toEqual({
+                editorType: 'scene', nodePath: 'Canvas/Box', propPath: '__comps__.0.offset',
             });
         } finally {
             Service.Undo.beginRecording.mockImplementation(begin);

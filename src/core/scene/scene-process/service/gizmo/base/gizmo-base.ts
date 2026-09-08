@@ -9,8 +9,6 @@ type BroadcastService = {
     broadcast?(event: string, ...args: unknown[]): void;
 };
 
-type GizmoPropertyPaths = string | readonly (string | null)[] | null;
-
 /**
  * 获取 Service（惰性访问，避免循环依赖）
  */
@@ -48,7 +46,6 @@ class GizmoBase<T extends Component = Component> {
      */
     protected _isControlBegin = false;
     protected _recorded = false;
-    private _recordingScope: IUndoScope | undefined;
     protected _nodeSelected = false;
 
     protected init?(): void;
@@ -107,35 +104,20 @@ class GizmoBase<T extends Component = Component> {
         }
     }
 
-    onControlBegin(propPath: GizmoPropertyPaths) {
-        const propertyPaths = this.normalizePropertyPaths(propPath);
-        const legacyPropPath = typeof propPath === 'string' ? propPath : propertyPaths[0] ?? null;
+    onControlBegin(propPath: string | null) {
         this._isControlBegin = true;
-        this.recordChanges(propertyPaths);
+        this.recordChanges(propPath);
         try {
             const svcEvents = getServiceEvents();
-            svcEvents?.broadcast?.('gizmo:control-begin', legacyPropPath);
+            svcEvents?.broadcast?.('gizmo:control-begin', propPath);
         } catch (e) {
             // not ready
         }
     }
 
-    onControlUpdate(propPath: GizmoPropertyPaths) {
+    onControlUpdate(propPath: string | null) {
         if (!this._isControlBegin) {
             this.onControlBegin(propPath);
-        } else if (Array.isArray(propPath) && this._recordingScope) {
-            // The active recording retains this scope object until it is committed.
-            // A modifier change can add properties to the same gesture (Box2D Alt).
-            // Extend only explicit multi-property calls; legacy single-path callers
-            // retain their existing recording semantics.
-            const scope = this._recordingScope;
-            const previous = scope.propPaths ?? (scope.propPath ? [scope.propPath] : []);
-            const paths = this.normalizePropertyPaths(propPath).map(normalizeAnimationPropertyCommitPath);
-            const combined = [...new Set([...previous, ...paths])];
-            if (combined.length > 1) {
-                scope.propPaths = combined;
-                delete scope.propPath;
-            }
         }
     }
 
@@ -154,20 +136,17 @@ class GizmoBase<T extends Component = Component> {
         this.broadcastAnimationPropertyCommitted(propPath, animationCommitNodePaths);
     }
 
-    recordChanges(propPath?: GizmoPropertyPaths) {
+    recordChanges(propPath?: string | null) {
         if (!this._recorded) {
-            const propertyPaths = this.normalizePropertyPaths(propPath ?? null);
             const uuids = this.nodes.map(n => n.uuid);
             try {
                 const svc = getService();
-                this._recordingScope = this.createRecordingScope(propertyPaths);
                 this.undoID = svc?.Undo?.beginRecording?.(uuids, {
-                    label: propertyPaths.length > 0 ? `Gizmo ${propertyPaths.join(', ')}` : 'Gizmo Change',
-                    scope: this._recordingScope,
+                    label: propPath ? `Gizmo ${propPath}` : 'Gizmo Change',
+                    scope: this.createRecordingScope(propPath),
                 }) ?? '';
             } catch (e) {
                 this.undoID = '';
-                this._recordingScope = undefined;
             }
             this._recorded = true;
         }
@@ -177,7 +156,6 @@ class GizmoBase<T extends Component = Component> {
         // This reset is intentionally synchronous. Derived gizmos may inspect
         // `_recorded` while another teardown path is awaiting endRecording().
         this._recorded = false;
-        this._recordingScope = undefined;
         const undoID = this.undoID;
         // 在等待异步 endRecording 前先释放当前 ID。销毁、隐藏或快速切换目标
         // 可能再次触发 commitChanges；提前清空可避免重复结束旧事务，也不会让
@@ -193,9 +171,9 @@ class GizmoBase<T extends Component = Component> {
         }
     }
 
-    private createRecordingScope(propPaths: readonly string[]): IUndoScope | undefined {
+    private createRecordingScope(propPath?: string | null): IUndoScope | undefined {
         const nodes = this.nodes;
-        if (propPaths.length === 0 || nodes.length !== 1) {
+        if (!propPath || nodes.length !== 1) {
             return undefined;
         }
         const EditorExtends = (cc as any).EditorExtends || (globalThis as any).EditorExtends;
@@ -203,17 +181,11 @@ class GizmoBase<T extends Component = Component> {
         if (!nodePath) {
             return undefined;
         }
-        const normalizedPropPaths = propPaths.map(normalizeAnimationPropertyCommitPath);
-        const scope: IUndoScope = {
+        return {
             editorType: 'scene',
             nodePath,
+            propPath: normalizeAnimationPropertyCommitPath(propPath),
         };
-        if (normalizedPropPaths.length === 1) {
-            scope.propPath = normalizedPropPaths[0];
-        } else {
-            scope.propPaths = normalizedPropPaths;
-        }
-        return scope;
     }
 
     public checkVisible(): boolean {
@@ -282,11 +254,6 @@ class GizmoBase<T extends Component = Component> {
             return '_components.' + compIdx + '.' + propName;
         }
         return null;
-    }
-
-    private normalizePropertyPaths(propPath: GizmoPropertyPaths): string[] {
-        const propertyPaths = Array.isArray(propPath) ? propPath : [propPath];
-        return [...new Set(propertyPaths.filter((path): path is string => typeof path === 'string' && path.length > 0))];
     }
 
     private collectAnimationPropertyCommitNodePaths(propPath: string | null): string[] {

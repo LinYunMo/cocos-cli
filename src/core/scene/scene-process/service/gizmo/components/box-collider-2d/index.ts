@@ -9,13 +9,6 @@ function toPrecision(val: number, n: number): number {
     return Math.round(val * Math.pow(10, n)) / Math.pow(10, n);
 }
 
-function makeVec2InPrecision(v: Vec2, p: number): Vec2 {
-    const pow = Math.pow(10, p);
-    v.x = Math.round(v.x * pow) / pow;
-    v.y = Math.round(v.y * pow) / pow;
-    return v;
-}
-
 const HandleType = RectangleController.RectHandleType;
 
 const tempQuat_a = new Quat();
@@ -28,10 +21,9 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
     private _offset: Vec2 = new Vec2();
     private _anchor: Vec2 = new Vec2(0.5, 0.5);
     private _altKey = false;
-    private _propPaths: string | string[] | null = null;
+    private _propPath: string | null = null;
     private _dragTarget: BoxCollider2D | null = null;
     private _dragOffsetPath: string | null = null;
-    private _animationPropPath: string | null = null;
 
     init() {
         this.createController();
@@ -69,11 +61,10 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
         }
         this._dragTarget = this.target;
         this._dragOffsetPath = offsetPath;
-        this._animationPropPath = this._controller.getCurHandleType() === HandleType.Area
+        this._propPath = this._controller.getCurHandleType() === HandleType.Area
             ? offsetPath : this.getCompPropPath('size');
         this._size = this.target.size.clone();
         this._offset = this.target.offset.clone();
-        this._propPaths = null;
     }
 
     onControllerMouseMove() {
@@ -105,20 +96,20 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
 
     private finishControl(commitProperty = true) {
         const target = this._dragTarget;
-        const animationPropPath = this._animationPropPath;
-        // Undo covers every changed property; animation follows the gesture's
-        // primary property only (Resize: size, Area: offset).
+        const propPath = this._propPath;
+        // Scope and animation use the gesture's primary property (Resize: size,
+        // Area: offset). The node snapshot still restores all changed properties.
         const primaryChanged = this.isDragTargetValid() && target && (
-            animationPropPath === this._dragOffsetPath
+            propPath === this._dragOffsetPath
                 ? target.offset.x !== this._offset.x || target.offset.y !== this._offset.y
                 : target.size.width !== this._size.width || target.size.height !== this._size.height
         );
         this._dragTarget = null;
         this._dragOffsetPath = null;
-        this._animationPropPath = null;
+        this._propPath = null;
         if (this._isControlBegin) {
             if (commitProperty && primaryChanged) {
-                void this.onControlEnd(animationPropPath);
+                void this.onControlEnd(propPath);
             } else {
                 // Unbound/invalid targets and unchanged gestures must not emit an
                 // animation commit. The recorded node UUID still owns the Undo.
@@ -126,7 +117,6 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
                 void this.commitChanges();
             }
         }
-        this._propPaths = null;
     }
 
     onKeyDown(event: any) {
@@ -152,13 +142,12 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
         }
 
         posDelta.z = 0;
-        const offset = new Vec2(this._offset.x + posDelta.x, this._offset.y + posDelta.y);
-        makeVec2InPrecision(offset, 1);
-        if (offset.x === this.target.offset.x && offset.y === this.target.offset.y) return;
+        const offsetX = toPrecision(this._offset.x + posDelta.x, 1);
+        const offsetY = toPrecision(this._offset.y + posDelta.y, 1);
+        if (offsetX === this.target.offset.x && offsetY === this.target.offset.y) return;
 
-        this._propPaths = this.getCompPropPath('offset');
-        this.onControlUpdate(this._propPaths);
-        this.target.offset.set(offset);
+        this.onControlUpdate(this._propPath);
+        this.target.offset.set(offsetX, offsetY);
         this.onComponentChanged(node);
     }
 
@@ -205,7 +194,8 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
             return;
         }
         const node = this.target.node;
-        const offset = this.target.offset.clone();
+        let offsetX = this.target.offset.x;
+        let offsetY = this.target.offset.y;
 
         if (!keepCenter) {
             // Resize deltas are projected onto the controller axes, in world units.
@@ -219,9 +209,8 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
             tempMat4.m12 = tempMat4.m13 = tempMat4.m14 = 0;
             Vec3.transformMat4(posDelta, posDelta, tempMat4);
             posDelta.z = 0;
-            offset.set(this._offset);
-            offset.add2f(posDelta.x, posDelta.y);
-            makeVec2InPrecision(offset, 1);
+            offsetX = toPrecision(this._offset.x + posDelta.x, 1);
+            offsetY = toPrecision(this._offset.y + posDelta.y, 1);
         }
 
         const worldScale = new Vec3();
@@ -234,19 +223,12 @@ class BoxCollider2DGizmo extends GizmoBase<BoxCollider2D> {
         width = toPrecision(width, 1);
         height = toPrecision(height, 1);
         const sizeChanged = width !== this.target.size.width || height !== this.target.size.height;
-        const offsetChanged = offset.x !== this.target.offset.x || offset.y !== this.target.offset.y;
+        const offsetChanged = offsetX !== this.target.offset.x || offsetY !== this.target.offset.y;
         if (!sizeChanged && !offsetChanged) return;
 
-        // Record before writing, after rounding determines which properties change.
-        const changedPaths = [
-            sizeChanged ? this.getCompPropPath('size') : null,
-            offsetChanged ? this.getCompPropPath('offset') : null,
-        ];
-        const previousPaths = typeof this._propPaths === 'string' ? [this._propPaths] : this._propPaths ?? [];
-        const paths = [...new Set([...previousPaths, ...changedPaths].filter((path): path is string => path !== null))];
-        this._propPaths = paths.length === 1 ? paths[0] : paths;
-        this.onControlUpdate(this._propPaths);
-        if (offsetChanged) this.target.offset.set(offset);
+        // Record before writing, but only after rounding confirms a value change.
+        this.onControlUpdate(this._propPath);
+        if (offsetChanged) this.target.offset.set(offsetX, offsetY);
         if (sizeChanged) this.target.size.set(new Size(width, height));
 
         this.onComponentChanged(node);
