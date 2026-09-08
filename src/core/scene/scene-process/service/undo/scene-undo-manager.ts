@@ -646,7 +646,24 @@ function matchesUndoScope(commandScope: IUndoScope, expectedScope?: Partial<IUnd
         return true;
     }
     for (const [key, value] of Object.entries(expectedScope) as [keyof IUndoScope, unknown][]) {
-        if (value !== undefined && commandScope[key] !== value) {
+        if (value === undefined) {
+            continue;
+        }
+        if (key === 'propPath' && typeof value === 'string') {
+            const commandPropPaths = commandScope.propPaths ?? (commandScope.propPath ? [commandScope.propPath] : []);
+            if (!commandPropPaths.includes(value)) {
+                return false;
+            }
+            continue;
+        }
+        if (key === 'propPaths' && Array.isArray(value)) {
+            const commandPropPaths = commandScope.propPaths ?? (commandScope.propPath ? [commandScope.propPath] : []);
+            if (!value.every(propPath => typeof propPath === 'string' && commandPropPaths.includes(propPath))) {
+                return false;
+            }
+            continue;
+        }
+        if (commandScope[key] !== value) {
             return false;
         }
     }

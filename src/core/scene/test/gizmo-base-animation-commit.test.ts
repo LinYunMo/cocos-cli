@@ -220,6 +220,42 @@ describe('GizmoBase animation property commit event', () => {
         }]);
     });
 
+    it('records one multi-property scope and commits only the primary animation property', async () => {
+        const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
+        class TestGizmo extends GizmoBase {
+            get nodes() {
+                return [{ uuid: 'BoxColliderNode' }];
+            }
+        }
+        const gizmo = new (TestGizmo as any)(null);
+        const propPaths = ['_components.0.size', '_components.0.offset'];
+
+        gizmo.onControlUpdate(propPaths);
+        gizmo.onControlUpdate(propPaths);
+        const { Service } = require('../scene-process/service/core/decorator');
+        expect(Service.Undo.beginRecording).toHaveBeenCalledTimes(1);
+        expect(Service.Undo.beginRecording).toHaveBeenCalledWith(['BoxColliderNode'], {
+            label: 'Gizmo _components.0.size, _components.0.offset',
+            scope: {
+                editorType: 'scene',
+                nodePath: 'Canvas/BoxColliderNode',
+                propPaths: ['__comps__.0.size', '__comps__.0.offset'],
+            },
+        });
+
+        await gizmo.onControlEnd('_components.0.size');
+
+        expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
+        expect(broadcasts).toContainEqual(['gizmo:control-end', '_components.0.size']);
+        expect(broadcasts.filter(([event]) => event === 'animation:property-committed')).toEqual([
+            ['animation:property-committed', {
+                nodePath: 'Canvas/BoxColliderNode',
+                propPath: '__comps__.0.size',
+                source: 'engine',
+            }],
+        ]);
+    });
+
     it('does not end the same recording twice when destroy races an async control end', async () => {
         endRecordingPromise = new Promise((resolve) => {
             endRecordingResolve = () => resolve(undefined);
@@ -241,6 +277,63 @@ describe('GizmoBase animation property commit event', () => {
         endRecordingResolve?.();
         await controlEnd;
         expect(Service.Undo.endRecording).toHaveBeenCalledTimes(1);
+    });
+
+    it('adds a property to an active drag without splitting its snapshot undo', async () => {
+        const { SceneUndoManager } = require('../scene-process/service/undo/scene-undo-manager');
+        let state = { size: 10, offset: 0 };
+        const manager = new SceneUndoManager({
+            snapshotAdapter: {
+                capture: () => new Map([['Box', { ...state }]]),
+                apply: (snapshot: Map<string, typeof state>) => {
+                    state = { ...snapshot.get('Box')! };
+                    return { success: true };
+                },
+                equals: (a: Map<string, typeof state>, b: Map<string, typeof state>) => JSON.stringify([...a]) === JSON.stringify([...b]),
+            },
+        });
+        const { Service } = require('../scene-process/service/core/decorator');
+        const begin = Service.Undo.beginRecording.getMockImplementation();
+        const end = Service.Undo.endRecording.getMockImplementation();
+        Service.Undo.beginRecording.mockImplementation((uuids: string[], options: unknown) => manager.beginRecording(uuids, options));
+        Service.Undo.endRecording.mockImplementation((id: string) => manager.endRecording(id));
+        const GizmoBase = require('../scene-process/service/gizmo/base/gizmo-base').default;
+        class TestGizmo extends GizmoBase {
+            get nodes() { return [{ uuid: 'Box' }]; }
+        }
+        try {
+            const checkpoint = manager.createCheckpoint();
+            const gizmo = new (TestGizmo as any)(null);
+            gizmo.onControlUpdate('_components.0.size');
+            state.size = 14;
+            const paths = ['_components.0.size', '_components.0.offset'];
+            gizmo.onControlUpdate(paths);
+            state = { size: 16, offset: 3 };
+            await gizmo.onControlEnd('_components.0.size');
+            expect(Service.Undo.beginRecording).toHaveBeenCalledTimes(1);
+            expect(manager.getHistoryForTesting()).toHaveLength(1);
+            expect(manager.hasScopedDifference(checkpoint, { propPath: '__comps__.0.offset' })).toBe(true);
+            expect(manager.hasScopedDifference(checkpoint, { propPath: '__comps__.0.size' })).toBe(true);
+            expect(broadcasts.filter(([event]) => event === 'animation:property-committed')).toEqual([
+                ['animation:property-committed', {
+                    nodePath: 'Canvas/Box', propPath: '__comps__.0.size', source: 'engine',
+                }],
+            ]);
+            expect(await manager.undo({ scope: { propPath: '__comps__.0.offset' } })).toMatchObject({ success: true });
+            expect(state).toEqual({ size: 10, offset: 0 });
+            expect(await manager.redo({ scope: { propPath: '__comps__.0.size' } })).toMatchObject({ success: true });
+            expect(state).toEqual({ size: 16, offset: 3 });
+            gizmo.onControlUpdate('_components.0.size');
+            state.size = 20;
+            await gizmo.onControlEnd('_components.0.size');
+            expect(manager.getHistoryForTesting()[0].meta.scope.propPaths).toEqual(['__comps__.0.size', '__comps__.0.offset']);
+            expect(manager.getHistoryForTesting()[1].meta.scope).toEqual({
+                editorType: 'scene', nodePath: 'Canvas/Box', propPath: '__comps__.0.size',
+            });
+        } finally {
+            Service.Undo.beginRecording.mockImplementation(begin);
+            Service.Undo.endRecording.mockImplementation(end);
+        }
     });
 
     it('returns null when the target is absent from the node component list', () => {
